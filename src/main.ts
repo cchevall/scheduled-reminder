@@ -9,23 +9,21 @@ if (require("electron-squirrel-startup")) {
 
 const isDev = MAIN_WINDOW_VITE_DEV_SERVER_URL ? true : false;
 let mainWindow: BrowserWindow;
+let alertWindow: BrowserWindow;
 let tray: Tray | null = null;
 let scheduledTasks: ScheduledTask[] = [];
 
 const createAlertWindow = () => {
-  const alertWindow = new BrowserWindow({
+  alertWindow = new BrowserWindow({
     backgroundColor: "black",
     titleBarStyle: "hidden",
     show: true,
-    width: 600,
+    width: 800,
     height: 600,
+    skipTaskbar: true,
     webPreferences: {
-      webSecurity: false,
+      preload: path.join(__dirname, "preload.js"),
     },
-  });
-  console.log({
-    ALERT_WINDOW_VITE_DEV_SERVER_URL,
-    ALERT_WINDOW_VITE_NAME,
   });
   if (ALERT_WINDOW_VITE_DEV_SERVER_URL) {
     alertWindow.loadURL(ALERT_WINDOW_VITE_DEV_SERVER_URL);
@@ -43,17 +41,13 @@ const createSettingsWindow = () => {
   mainWindow = new BrowserWindow({
     width: 750,
     height: 600,
-    show: false,
+    show: true,
+    skipTaskbar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
     },
   });
 
-  // and load the index.html of the app.
-  console.log({
-    MAIN_WINDOW_VITE_DEV_SERVER_URL,
-    MAIN_WINDOW_VITE_NAME,
-  });
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
@@ -64,8 +58,6 @@ const createSettingsWindow = () => {
 
   // Open the DevTools.
   // mainWindow.webContents.openDevTools();
-  scheduledTasks.forEach((task) => task.stop());
-  scheduledTasks = [];
 };
 
 const createTray = () => {
@@ -75,34 +67,35 @@ const createTray = () => {
   tray = new Tray(imgPath);
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: "Settings",
+      label: "Préférences",
       click: () => {
         if (mainWindow.isDestroyed()) {
           createSettingsWindow();
         }
-        mainWindow.show();
         mainWindow.focus();
       },
     },
     {
-      label: "Alert",
+      label: "Tester",
       click: () => {
         createAlertWindow();
       },
     },
     {
-      label: "Quit",
+      label: "Fermer",
       click: () => {
         app.quit();
       },
     },
   ]);
-  tray.setToolTip("Electron Scheduler");
+  tray.setToolTip("scheduled-reminder");
   tray.setContextMenu(contextMenu);
 };
 
 const launch = (): void => {
   ipcMain.on("schedule-task", (event, tasks: Record<string, string[]>) => {
+    scheduledTasks.forEach((task) => task.stop());
+    scheduledTasks = [];
     // Parse the time and schedule a task
     for (const day in tasks) {
       for (const hours of tasks[day]) {
@@ -124,6 +117,9 @@ const launch = (): void => {
       }
     }
     mainWindow.close();
+  });
+  ipcMain.on("close-alert", () => {
+    alertWindow.close();
   });
   createSettingsWindow();
   createTray();
@@ -150,6 +146,8 @@ app.on("activate", () => {
     createSettingsWindow();
   }
 });
+
+app.dock.hide();
 
 // In this file you can include the rest of your app's specific main process
 // code. You can also put them in separate files and import them here.

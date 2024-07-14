@@ -4,4 +4,5 @@ import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("electronAPI", {
   scheduleTask: (data: any) => ipcRenderer.send("schedule-task", data),
+  close: () => ipcRenderer.send("close-alert"),
 });
