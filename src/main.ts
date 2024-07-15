@@ -1,6 +1,20 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray } from "electron";
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  nativeImage,
+  powerMonitor,
+  Tray,
+} from "electron";
 import cron, { ScheduledTask } from "node-cron";
 import path from "path";
+import parser from "cron-parser";
+
+type Reminder = {
+  task: ScheduledTask;
+  cronExpression: string;
+};
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (require("electron-squirrel-startup")) {
@@ -11,9 +25,14 @@ const isDev = MAIN_WINDOW_VITE_DEV_SERVER_URL ? true : false;
 let mainWindow: BrowserWindow;
 let alertWindow: BrowserWindow;
 let tray: Tray | null = null;
-let scheduledTasks: ScheduledTask[] = [];
+let reminders: Reminder[] = [];
+let idleDate: Date | null = null;
+let isLockScreen = false;
 
 const createAlertWindow = () => {
+  if (alertWindow != null && !alertWindow.isDestroyed()) {
+    return;
+  }
   alertWindow = new BrowserWindow({
     backgroundColor: "black",
     titleBarStyle: "hidden",
@@ -94,8 +113,8 @@ const createTray = () => {
 
 const launch = (): void => {
   ipcMain.on("schedule-task", (event, tasks: Record<string, string[]>) => {
-    scheduledTasks.forEach((task) => task.stop());
-    scheduledTasks = [];
+    reminders.forEach((reminder) => reminder.task.stop());
+    reminders = [];
     // Parse the time and schedule a task
     for (const day in tasks) {
       for (const hours of tasks[day]) {
@@ -107,22 +126,39 @@ const launch = (): void => {
           friday: 5,
         };
         const [hour, minute] = hours.split(":").map(Number);
+        const cronExpression = `${minute} ${hour} * * ${dayToCronDayNum[day]}`;
         const task = cron.schedule(
           `${minute} ${hour} * * ${dayToCronDayNum[day]}`,
           () => {
-            createAlertWindow();
+            if (!isLockScreen) {
+              createAlertWindow();
+            }
           }
         );
-        scheduledTasks.push(task);
+        reminders.push({
+          task,
+          cronExpression,
+        });
       }
     }
     mainWindow.close();
   });
   ipcMain.on("close-alert", () => {
-    alertWindow.close();
+    if (alertWindow && !alertWindow.isDestroyed()) {
+      alertWindow.close();
+    }
   });
   createSettingsWindow();
   createTray();
+};
+
+const hasOccurrenceBetween = (
+  cronExpression: string,
+  startDate: Date
+): boolean => {
+  const interval = parser.parseExpression(cronExpression);
+  const prev = interval.prev();
+  return prev.toDate().toISOString() > startDate.toISOString();
 };
 
 // This method will be called when Electron has finished
@@ -147,7 +183,44 @@ app.on("activate", () => {
   }
 });
 
-app.dock.hide();
+powerMonitor.on("lock-screen", () => {
+  idleDate = new Date();
+  isLockScreen = true;
+});
 
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and import them here.
+powerMonitor.on("unlock-screen", () => {
+  isLockScreen = false;
+  if (!idleDate) {
+    return;
+  }
+  if (
+    reminders.some((task) =>
+      hasOccurrenceBetween(task.cronExpression, idleDate)
+    )
+  ) {
+    createAlertWindow();
+  }
+  idleDate = null;
+});
+
+powerMonitor.on("suspend", () => {
+  if (isLockScreen) {
+    return;
+  }
+  idleDate = new Date();
+});
+
+powerMonitor.on("resume", () => {
+  if (isLockScreen) {
+    return;
+  }
+  if (
+    reminders.some((task) =>
+      hasOccurrenceBetween(task.cronExpression, idleDate)
+    )
+  ) {
+    createAlertWindow();
+  }
+  idleDate = null;
+});
+app.dock.hide();
